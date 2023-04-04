@@ -1,0 +1,17 @@
+[package]
+description = "A new Mspc Channel"
+name = "personal_channel"
+version = "0.1.0"
+edition = "2021"
+keywords = ["mspc","channel","concurrent"]
+categories = ["programmer tool"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/JackTan25/mspc-channel"
+readme = "README.md"
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+parking_lot = "0.12.1"
+thiserror = "1.0.39"
+log = "0.4.0"
+env_logger = "0.10.0"
