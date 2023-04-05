@@ -81,6 +81,7 @@ impl<T> Sender<T> {
 }
 
 #[derive(Debug)]
+#[deny(clippy::clone_on_ref_ptr)]
 /// `Reciever` is used to recieve message from channel.
 pub struct Reciever<T> {
     /// hold a channel ref_counter
