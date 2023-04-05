@@ -103,4 +103,65 @@ pub(crate) mod test_channel {
         let message = reciever.recv();
         assert!(message.is_ok());
     }
+    #[test]
+    fn test_get_valid_message_first() {
+        let (sender0, reciever) = MspcChannel::<i32>::channel(-1);
+        let sender = Arc::new(sender0);
+        let mut hanlders = Vec::new();
+        for i in 1..=4 {
+            let shared_sender = sender.clone();
+            let handler = std::thread::spawn(move || {
+                let sender_local = shared_sender.clone();
+                let str = std::format!("{}", i);
+                let strs = vec![String::from("a") + &str, String::from("b") + &str];
+                let message = InternalMessage::new(strs, i);
+                let res = sender_local.send(message);
+                assert!(res.is_ok())
+            });
+            hanlders.push(handler)
+        }
+        for i in 1..=4 {
+            let shared_sender = sender.clone();
+            let handler = std::thread::spawn(move || {
+                let sender_local = shared_sender.clone();
+                let str = std::format!("{}", i);
+                let strs = vec![String::from("a") + &str, String::from("b") + &str];
+                let message = InternalMessage::new(strs, i);
+                let res = sender_local.send(message);
+                assert!(res.is_ok())
+            });
+            hanlders.push(handler)
+        }
+        for handler in hanlders {
+            handler.join().unwrap();
+        }
+        // for now we have all data in channel
+        {
+            let message0 = reciever.recv();
+            assert!(message0.is_ok());
+            let message1 = reciever.recv();
+            assert!(message1.is_ok());
+            let message2 = reciever.recv();
+            assert!(message2.is_ok());
+            let message3 = reciever.recv();
+            assert!(message3.is_ok());
+            // message 'Active'
+            assert!(reciever.recv().is_err());
+            if let Err(err) = reciever.recv() {
+                assert_eq!(err, Errors::KeyDuplicate);
+            }
+            // messages drop here
+        }
+        {
+            let message0 = reciever.recv();
+            assert!(message0.is_ok());
+            let message1 = reciever.recv();
+            assert!(message1.is_ok());
+            let message2 = reciever.recv();
+            assert!(message2.is_ok());
+            let message3 = reciever.recv();
+            assert!(message3.is_ok());
+            // messages drop here
+        }
+    }
 }

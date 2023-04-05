@@ -1,6 +1,6 @@
 use crate::errors::{Errors, Result};
 use log::error;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{collections::HashSet, sync::Arc};
 /// Key is a struct type, we use it as the
 /// message's key
@@ -49,19 +49,19 @@ pub struct Sender<T> {
 }
 
 impl<T> Sender<T> {
-    ///
+    /// send a message to the channel
     pub fn send(&self, mut message: InternalMessage<T>) -> Result<()> {
         for key in &mut message.keys {
             key.1 = Some(Arc::clone(&self.chan));
         }
         // -1 means this is a unbounded channel
         if self.chan.bounded_size == -1 {
-            let mut write_guard = self.chan.cached_messages.write();
+            let mut write_guard = self.chan.cached_messages.lock();
             write_guard.push(message);
             Ok(())
         } else {
             loop {
-                let mut write_guard = self.chan.cached_messages.write();
+                let mut write_guard = self.chan.cached_messages.lock();
                 let bounded_size: usize = match self.chan.bounded_size.try_into() {
                     Err(e) => {
                         error!("type conversion error,{}", e);
@@ -75,6 +75,10 @@ impl<T> Sender<T> {
                     return Ok(());
                 }
                 drop(write_guard);
+                // use yield_now() to optimize, otherwise
+                // it will loop forever, cost too much computation
+                // source.
+                std::thread::yield_now();
             }
         }
     }
@@ -93,28 +97,37 @@ impl<T> Reciever<T> {
     pub fn recv(&self) -> Result<InternalMessage<T>> {
         // get write_guard
         loop {
-            let mut write_guard = self.chan.cached_messages.write();
+            let mut write_guard = self.chan.cached_messages.lock();
             // 1.there is no message in channel
             // just loop ahead
             if write_guard.len() == 0 {
                 drop(write_guard);
+                // use yield_now() to optimize, otherwise
+                // it will loop forever, cost too much computation
+                // source.
+                std::thread::yield_now();
                 continue;
             }
-            let opt = write_guard.first();
-            if let Some(message) = opt {
-                // 2.test whether there exists duplicate key which is 'Active'
-                let flag = self.chan.duplicate_key(message);
-                if flag {
-                    return Err(Errors::KeyDuplicate);
+            // we need to see all messages, if there is anyone message
+            // is ok, just give it out.
+            for i in 0..write_guard.len() {
+                let opt = write_guard.get(i);
+                if let Some(message) = opt {
+                    // 2.test whether there exists duplicate key which is 'Active'
+                    let flag = self.chan.duplicate_key(message);
+                    if flag {
+                        continue;
+                    }
+                    // add counter
+                    let mut write_guard2 = self.chan.counter.write();
+                    for key_ in &message.keys {
+                        let _ = write_guard2.insert(String::from(&key_.0));
+                    }
+                    return Ok(write_guard.remove(0));
                 }
-                // add counter
-                let mut write_guard2 = self.chan.counter.write();
-                for key_ in &message.keys {
-                    let _ = write_guard2.insert(String::from(&key_.0));
-                }
-                return Ok(write_guard.remove(0));
+                panic!("MessageOptError")
             }
-            panic!("MessageOptError")
+            return Err(Errors::KeyDuplicate);
         }
     }
 }
@@ -125,7 +138,7 @@ impl<T> Reciever<T> {
 #[derive(Debug)]
 pub(crate) struct MspcChannel<T> {
     /// the messages will be stored here
-    cached_messages: Arc<RwLock<Vec<InternalMessage<T>>>>,
+    cached_messages: Arc<Mutex<Vec<InternalMessage<T>>>>,
     /// used for checking duplicate keys
     counter: Arc<RwLock<HashSet<String>>>,
     /// the capcity of a channel
@@ -136,7 +149,7 @@ impl<T> MspcChannel<T> {
     /// `channel` func is used to get sender and reciever
     pub(crate) fn channel(bounded_size_: i32) -> (Sender<T>, Reciever<T>) {
         let message_channel = Arc::new(MspcChannel {
-            cached_messages: Arc::new(RwLock::new(Vec::<InternalMessage<T>>::new())),
+            cached_messages: Arc::new(Mutex::new(Vec::<InternalMessage<T>>::new())),
             counter: Arc::new(RwLock::new(HashSet::<String>::new())),
             bounded_size: bounded_size_,
         });
