@@ -1,6 +1,6 @@
 use crate::errors::{Errors, Result};
 use log::error;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use std::{collections::HashSet, sync::Arc};
 /// Key is a struct type, we use it as the
 /// message's key
@@ -72,13 +72,11 @@ impl<T> Sender<T> {
 
                 if write_guard.len() < bounded_size {
                     write_guard.push(message);
+                    let _ = self.chan.cond_var_recieve.notify_one();
                     return Ok(());
                 }
-                drop(write_guard);
-                // use yield_now() to optimize, otherwise
-                // it will loop forever, cost too much computation
-                // source.
-                std::thread::yield_now();
+                // channel is full, wait here.
+                self.chan.cond_var_send.wait(&mut write_guard);
             }
         }
     }
@@ -93,6 +91,7 @@ pub struct Reciever<T> {
 }
 
 impl<T> Reciever<T> {
+    #[allow(arithmetic_overflow)]
     /// `recv` recieve message from channel
     pub fn recv(&self) -> Result<InternalMessage<T>> {
         // get write_guard
@@ -101,11 +100,7 @@ impl<T> Reciever<T> {
             // 1.there is no message in channel
             // just loop ahead
             if write_guard.len() == 0 {
-                drop(write_guard);
-                // use yield_now() to optimize, otherwise
-                // it will loop forever, cost too much computation
-                // source.
-                std::thread::yield_now();
+                self.chan.cond_var_recieve.wait(&mut write_guard);
                 continue;
             }
             // we need to see all messages, if there is anyone message
@@ -123,7 +118,21 @@ impl<T> Reciever<T> {
                     for key_ in &message.keys {
                         let _ = write_guard2.insert(String::from(&key_.0));
                     }
-                    return Ok(write_guard.remove(i));
+                    let res = write_guard.remove(i);
+                    if self.chan.bounded_size == -1 {
+                        return Ok(res);
+                    }
+                    let size: i32 = match write_guard.len().try_into() {
+                        Err(e) => {
+                            error!("type conversion error,{}", e);
+                            return Err(Errors::TypeConversionError);
+                        }
+                        Ok(size) => size,
+                    };
+                    if  1 == self.chan.bounded_size.wrapping_sub(size) {
+                        let _ = self.chan.cond_var_send.notify_all();
+                    }
+                    return Ok(res);
                 }
                 panic!("MessageOptError")
             }
@@ -143,6 +152,10 @@ pub(crate) struct MspcChannel<T> {
     counter: Arc<RwLock<HashSet<String>>>,
     /// the capcity of a channel
     bounded_size: i32,
+    /// use condVar to support block recieve
+    cond_var_recieve: Arc<Condvar>,
+    /// use condVar to support block send
+    cond_var_send: Arc<Condvar>,
 }
 
 impl<T> MspcChannel<T> {
@@ -152,6 +165,8 @@ impl<T> MspcChannel<T> {
             cached_messages: Arc::new(Mutex::new(Vec::<InternalMessage<T>>::new())),
             counter: Arc::new(RwLock::new(HashSet::<String>::new())),
             bounded_size: bounded_size_,
+            cond_var_recieve: Arc::new(Condvar::new()),
+            cond_var_send: Arc::new(Condvar::new()),
         });
         let sender = Sender {
             chan: Arc::clone(&message_channel),
