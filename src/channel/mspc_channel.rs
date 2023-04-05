@@ -123,7 +123,7 @@ impl<T> Reciever<T> {
                     for key_ in &message.keys {
                         let _ = write_guard2.insert(String::from(&key_.0));
                     }
-                    return Ok(write_guard.remove(0));
+                    return Ok(write_guard.remove(i));
                 }
                 panic!("MessageOptError")
             }
