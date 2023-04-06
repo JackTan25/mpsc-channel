@@ -23,7 +23,7 @@ pub(crate) mod test_channel {
         for i in 1..=4 {
             let shared_sender = sender.clone();
             let handler = std::thread::spawn(move || {
-                let sender_local = shared_sender.clone();
+                let sender_local = shared_sender;
                 let strs = vec![String::from("a"), String::from("b")];
                 let message = InternalMessage::new(strs, i);
                 let res = sender_local.send(message);
@@ -126,7 +126,7 @@ pub(crate) mod test_channel {
                 let sender_local = shared_sender.clone();
                 let str = std::format!("{}", i);
                 let strs = vec![String::from("a") + &str, String::from("b") + &str];
-                let message = InternalMessage::new(strs, i);
+                let message = InternalMessage::new(strs, i + 1);
                 let res = sender_local.send(message);
                 assert!(res.is_ok())
             });
